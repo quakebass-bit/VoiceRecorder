@@ -29,19 +29,17 @@
       justify-content: center;
       width: 100%;
       max-width: 420px;
+      gap: 16px;
     }
     button {
       width: 100%;
-      min-height: 120px;
-      padding: 24px 20px;
-      font-size: 24px;
+      min-height: 90px;
+      padding: 20px 20px;
+      font-size: 22px;
       font-weight: 700;
       cursor: pointer;
       border: none;
-      border-radius: 24px;
-      background: #2563eb;
-      color: #ffffff;
-      box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.4), 0 8px 10px -6px rgba(37, 99, 235, 0.4);
+      border-radius: 20px;
       transition: all 0.2s ease;
       touch-action: manipulation;
       display: flex;
@@ -53,25 +51,65 @@
     button:active {
       transform: scale(0.97);
     }
-    button.recording {
+    #recordBtn {
+      background: #2563eb;
+      color: #ffffff;
+      box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.4), 0 8px 10px -6px rgba(37, 99, 235, 0.4);
+    }
+    #recordBtn.recording {
       background: #dc2626;
       box-shadow: 0 10px 25px -5px rgba(220, 38, 38, 0.5), 0 8px 10px -6px rgba(220, 38, 38, 0.5);
       animation: pulse 1.6s infinite ease-in-out;
+    }
+    .player-card {
+      width: 100%;
+      background: #1e293b;
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .player-card.active {
+      display: flex;
+    }
+    .audio-custom-controls {
+      display: flex;
+      gap: 12px;
+    }
+    #playPauseBtn {
+      flex: 1;
+      min-height: 60px;
+      font-size: 18px;
+      background: #059669;
+      color: #ffffff;
+      border-radius: 14px;
+      box-shadow: 0 4px 14px rgba(5, 150, 105, 0.4);
+    }
+    #playPauseBtn.playing {
+      background: #d97706;
+      box-shadow: 0 4px 14px rgba(217, 119, 6, 0.4);
+    }
+    audio {
+      width: 100%;
+      border-radius: 10px;
+      outline: none;
     }
     @keyframes pulse {
       0%, 100% {
         transform: scale(1);
       }
       50% {
-        transform: scale(1.03);
+        transform: scale(1.02);
       }
     }
     #status {
-      margin-top: 24px;
-      font-size: 16px;
+      font-size: 15px;
       color: #94a3b8;
       text-align: center;
       min-height: 24px;
+      word-break: break-all;
     }
   </style>
 </head>
@@ -79,14 +117,27 @@
 
   <div class="container">
     <button id="recordBtn">Начать запись</button>
+    
+    <div class="player-card" id="playerCard">
+      <audio id="audioPlayer" controls></audio>
+      <div class="audio-custom-controls">
+        <button id="playPauseBtn">Воспроизвести</button>
+      </div>
+    </div>
+
     <div id="status"></div>
   </div>
 
   <script>
     const btn = document.getElementById('recordBtn');
     const status = document.getElementById('status');
+    const playerCard = document.getElementById('playerCard');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const playPauseBtn = document.getElementById('playPauseBtn');
+
     let mediaRecorder;
     let audioChunks = [];
+    let currentAudioUrl = null;
 
     // Подбор доступного формата под устройство (включая iOS / Safari)
     function getSupportedMimeType() {
@@ -104,6 +155,30 @@
       }
       return { mime: '', ext: 'audio' };
     }
+
+    // Управление кнопкой воспроизведения / паузы
+    playPauseBtn.addEventListener('click', () => {
+      if (audioPlayer.paused) {
+        audioPlayer.play();
+      } else {
+        audioPlayer.pause();
+      }
+    });
+
+    audioPlayer.addEventListener('play', () => {
+      playPauseBtn.textContent = 'Пауза';
+      playPauseBtn.classList.add('playing');
+    });
+
+    audioPlayer.addEventListener('pause', () => {
+      playPauseBtn.textContent = 'Воспроизвести';
+      playPauseBtn.classList.remove('playing');
+    });
+
+    audioPlayer.addEventListener('ended', () => {
+      playPauseBtn.textContent = 'Воспроизвести заново';
+      playPauseBtn.classList.remove('playing');
+    });
 
     btn.addEventListener('click', async () => {
       // Если запись уже идет — останавливаем
@@ -141,7 +216,17 @@
         mediaRecorder.onstop = () => {
           const mimeType = selectedFormat.mime || 'audio/wav';
           const audioBlob = new Blob(audioChunks, { type: mimeType });
-          const url = URL.createObjectURL(audioBlob);
+          
+          if (currentAudioUrl) {
+            URL.revokeObjectURL(currentAudioUrl);
+          }
+          currentAudioUrl = URL.createObjectURL(audioBlob);
+
+          // Показываем плеер и привязываем файл
+          audioPlayer.src = currentAudioUrl;
+          playerCard.classList.add('active');
+          playPauseBtn.textContent = 'Воспроизвести';
+          playPauseBtn.classList.remove('playing');
 
           // Формат имени: ДД-ММ-ГГГГ-ЧЧ-ММ.<ext>
           const now = new Date();
@@ -153,13 +238,12 @@
           const fileName = `${day}-${month}-${year}-${hours}-${minutes}.${selectedFormat.ext}`;
 
           const a = document.createElement('a');
-          a.href = url;
+          a.href = currentAudioUrl;
           a.download = fileName;
           document.body.appendChild(a);
           a.click();
           a.remove();
 
-          URL.revokeObjectURL(url);
           stream.getTracks().forEach(track => track.stop());
           status.textContent = `Сохранено: ${fileName}`;
         };

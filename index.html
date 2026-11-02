@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Диктофон</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 24px;
+      background: #0f172a;
+      color: #f8fafc;
+      user-select: none;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      max-width: 420px;
+      gap: 16px;
+    }
+    button {
+      width: 100%;
+      min-height: 100px;
+      padding: 20px;
+      font-size: 22px;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      border-radius: 20px;
+      transition: all 0.2s ease;
+      touch-action: manipulation;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      line-height: 1.3;
+    }
+    button:active {
+      transform: scale(0.97);
+    }
+    #recordBtn {
+      background: #2563eb;
+      color: #ffffff;
+      box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.4);
+    }
+    #recordBtn.recording {
+      background: #dc2626;
+      box-shadow: 0 10px 25px -5px rgba(220, 38, 38, 0.5);
+      animation: pulse 1.6s infinite ease-in-out;
+    }
+    #pauseBtn {
+      display: none;
+      background: #f59e0b;
+      color: #0f172a;
+      box-shadow: 0 10px 25px -5px rgba(245, 158, 11, 0.4);
+    }
+    #pauseBtn.paused {
+      background: #10b981;
+      color: #ffffff;
+      box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4);
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
+    }
+    #status {
+      font-size: 16px;
+      color: #94a3b8;
+      text-align: center;
+      min-height: 24px;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <button id="recordBtn">Начать запись</button>
+    <button id="pauseBtn">Пауза</button>
+    <div id="status"></div>
+  </div>
+
+  <script>
+    const recordBtn = document.getElementById('recordBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const status = document.getElementById('status');
+
+    let mediaRecorder;
+    let audioChunks = [];
+    let audioStream = null;
+
+    function getSupportedMimeType() {
+      const types = [
+        { mime: 'audio/webm;codecs=opus', ext: 'webm' },
+        { mime: 'audio/webm', ext: 'webm' },
+        { mime: 'audio/mp4', ext: 'mp4' },
+        { mime: 'audio/aac', ext: 'aac' },
+        { mime: '', ext: 'wav' }
+      ];
+      for (const t of types) {
+        if (!t.mime || (window.MediaRecorder && MediaRecorder.isTypeSupported(t.mime))) {
+          return t;
+        }
+      }
+      return { mime: '', ext: 'audio' };
+    }
+
+    // Кнопка Пауза / Продолжить
+    pauseBtn.addEventListener('click', () => {
+      if (!mediaRecorder) return;
+
+      if (mediaRecorder.state === 'recording') {
+        mediaRecorder.pause();
+        recordBtn.classList.remove('recording');
+        pauseBtn.textContent = 'Продолжить запись';
+        pauseBtn.classList.add('paused');
+        status.textContent = 'Запись на паузе';
+      } else if (mediaRecorder.state === 'paused') {
+        mediaRecorder.resume();
+        recordBtn.classList.add('recording');
+        pauseBtn.textContent = 'Пауза';
+        pauseBtn.classList.remove('paused');
+        status.textContent = 'Идёт запись...';
+      }
+    });
+
+    // Кнопка Старт / Стоп
+    recordBtn.addEventListener('click', async () => {
+      if (mediaRecorder && (mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused')) {
+        mediaRecorder.stop();
+        recordBtn.textContent = 'Начать запись';
+        recordBtn.classList.remove('recording');
+        pauseBtn.style.display = 'none';
+        pauseBtn.classList.remove('paused');
+        pauseBtn.textContent = 'Пауза';
+        status.textContent = 'Сохранение файла...';
+        return;
+      }
+
+      status.textContent = '';
+
+      try {
+        audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+
+        const selectedFormat = getSupportedMimeType();
+        const options = selectedFormat.mime 
+          ? { mimeType: selectedFormat.mime, audioBitsPerSecond: 32000 } 
+          : {};
+
+        mediaRecorder = new MediaRecorder(audioStream, options);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const mimeType = selectedFormat.mime || 'audio/wav';
+          const audioBlob = new Blob(audioChunks, { type: mimeType });
+          const url = URL.createObjectURL(audioBlob);
+
+          const now = new Date();
+          const day = String(now.getDate()).padStart(2, '0');
+          const month = String(now.getMonth() + 1).padStart(2, '0');
+          const year = now.getFullYear();
+          const hours = String(now.getHours()).padStart(2, '0');
+          const minutes = String(now.getMinutes()).padStart(2, '0');
+          const fileName = `${day}-${month}-${year}-${hours}-${minutes}.${selectedFormat.ext}`;
+
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+
+          URL.revokeObjectURL(url);
+          if (audioStream) {
+            audioStream.getTracks().forEach(track => track.stop());
+          }
+          status.textContent = `Сохранено: ${fileName}`;
+        };
+
+        mediaRecorder.start();
+        recordBtn.textContent = 'Остановить и сохранить';
+        recordBtn.classList.add('recording');
+        pauseBtn.style.display = 'flex';
+        status.textContent = 'Идёт запись...';
+      } catch (err) {
+        status.textContent = 'Ошибка: нет доступа к микрофону.';
+      }
+    });
+  </script>
+
+</body>
+</html>

@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>MP3 Voice Recorder</title>
-  <!-- Load lightweight MP3 encoder directly from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -14,8 +13,18 @@
       min-height: 100vh; margin: 0; padding: 24px; background: #0f172a; color: #f8fafc; user-select: none;
     }
     .container { display: flex; flex-direction: column; align-items: center; width: 100%; max-width: 420px; gap: 16px; }
+    
+    #timer {
+      font-size: 46px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 1px;
+      color: #38bdf8;
+      margin-bottom: 4px;
+    }
+
     button {
-      width: 100%; min-height: 100px; padding: 20px; font-size: 22px; font-weight: 700;
+      width: 100%; min-height: 90px; padding: 20px; font-size: 22px; font-weight: 700;
       cursor: pointer; border: none; border-radius: 20px; transition: all 0.2s ease;
       touch-action: manipulation; display: flex; align-items: center; justify-content: center; text-align: center;
     }
@@ -31,15 +40,20 @@
 <body>
 
   <div class="container">
+    <div id="timer">00:00</div>
     <button id="recordBtn">Start Recording (MP3)</button>
     <button id="pauseBtn">Pause</button>
     <div id="status"></div>
   </div>
 
+  <audio id="silentAudio" loop playsinline style="display:none;"></audio>
+
   <script>
     const recordBtn = document.getElementById('recordBtn');
     const pauseBtn = document.getElementById('pauseBtn');
     const status = document.getElementById('status');
+    const timerDisplay = document.getElementById('timer');
+    const silentAudio = document.getElementById('silentAudio');
 
     let audioContext = null;
     let mediaStream = null;
@@ -50,15 +64,77 @@
     let isRecording = false;
     let isPaused = false;
 
+    // Timer variables
+    let timerInterval = null;
+    let startTime = 0;
+    let accumulatedTime = 0;
+
+    // Генерация бесшумного закольцованного WAV-трека для удержания аудиосессии в фоне
+    function setupSilentAudio() {
+      // 1-секундный тихий WAV (base64)
+      silentAudio.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==";
+    }
+    setupSilentAudio();
+
+    // Защита от засыпания при сворачивании
+    document.addEventListener('visibilitychange', () => {
+      if (audioContext && audioContext.state === 'suspended' && isRecording && !isPaused) {
+        audioContext.resume();
+      }
+      if (!document.hidden && isRecording && !isPaused) {
+        updateTimerDisplay();
+      }
+    });
+
+    function formatTime(ms) {
+      const totalSec = Math.floor(ms / 1000);
+      const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+      const s = String(totalSec % 60).padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function updateTimerDisplay() {
+      if (!isRecording) return;
+      const currentElapsed = isPaused ? accumulatedTime : accumulatedTime + (Date.now() - startTime);
+      timerDisplay.textContent = formatTime(currentElapsed);
+    }
+
+    function startTimer() {
+      startTime = Date.now();
+      timerInterval = setInterval(updateTimerDisplay, 250);
+    }
+
+    function pauseTimer() {
+      clearInterval(timerInterval);
+      accumulatedTime += Date.now() - startTime;
+      updateTimerDisplay();
+    }
+
+    function resumeTimer() {
+      startTime = Date.now();
+      timerInterval = setInterval(updateTimerDisplay, 250);
+    }
+
+    function resetTimer() {
+      clearInterval(timerInterval);
+      accumulatedTime = 0;
+      timerDisplay.textContent = '00:00';
+    }
+
     pauseBtn.addEventListener('click', () => {
       if (!isRecording) return;
       isPaused = !isPaused;
+
       if (isPaused) {
+        pauseTimer();
+        silentAudio.pause();
         recordBtn.classList.remove('recording');
         pauseBtn.textContent = 'Resume Recording';
         pauseBtn.classList.add('paused');
         status.textContent = 'Recording paused';
       } else {
+        resumeTimer();
+        silentAudio.play().catch(() => {});
         recordBtn.classList.add('recording');
         pauseBtn.textContent = 'Pause';
         pauseBtn.classList.remove('paused');
@@ -68,9 +144,12 @@
 
     recordBtn.addEventListener('click', async () => {
       if (isRecording) {
-        // Stop and finalize MP3
+        // Остановка и сохранение
         isRecording = false;
         isPaused = false;
+        resetTimer();
+        silentAudio.pause();
+
         recordBtn.textContent = 'Start Recording (MP3)';
         recordBtn.classList.remove('recording');
         pauseBtn.style.display = 'none';
@@ -81,7 +160,7 @@
         if (input) input.disconnect();
         if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
 
-        // Flush remaining buffer
+        // Завершение сжатия
         const endBuf = mp3Encoder.flush();
         if (endBuf.length > 0) mp3Data.push(endBuf);
 
@@ -109,10 +188,19 @@
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
         });
 
+        // Запуск фиктивного тихого аудио на жест пользователя (держит сессию на iOS/Android)
+        try {
+          await silentAudio.play();
+        } catch (e) {
+          console.warn('Audio keep-alive warning:', e);
+        }
+
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+
         const sampleRate = audioContext.sampleRate;
-        
-        // 1 channel (mono), 64 kbps bitrate (compact and ideal for voice)
         mp3Encoder = new lamejs.Mp3Encoder(1, sampleRate, 64);
         mp3Data = [];
 
@@ -123,7 +211,6 @@
           if (!isRecording || isPaused) return;
           const float32Arr = e.inputBuffer.getChannelData(0);
           
-          // Convert Float32 to Int16 for lamejs
           const int16Arr = new Int16Array(float32Arr.length);
           for (let i = 0; i < float32Arr.length; i++) {
             let s = Math.max(-1, Math.min(1, float32Arr[i]));
@@ -140,6 +227,8 @@
         processor.connect(audioContext.destination);
 
         isRecording = true;
+        startTimer();
+
         recordBtn.textContent = 'Stop and Save';
         recordBtn.classList.add('recording');
         pauseBtn.style.display = 'flex';
